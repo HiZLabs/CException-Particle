@@ -1,0 +1,7 @@
+{
+    "name": "CException",
+    "version": "0.0.1",
+    "author": "Aaron Heise <aaron@hizlabs.com>",
+    "license": "MIT",
+    "description": "Enables exceptions (Try/Catch)"
+}
