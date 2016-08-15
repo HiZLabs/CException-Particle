@@ -2,6 +2,8 @@
 #include "application.h"
 #include <mutex>
 
+LOG_SOURCE_CATEGORY("cexception");
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 volatile CEXCEPTION_FRAME_T CExceptionFrames[CEXCEPTION_NUM_ID] = {{ 0 }};
@@ -96,7 +98,7 @@ void __cexception_thread_wrapper(void * arg) {
 	Try	{
 		threadInfo.func(threadInfo.arg);
 	} Catch(e) {
-		LOG(ERROR, "Uncaught exception 0x%08x in thread %s, thread killed", e, threadInfo.name);
+		LOG(ERROR, "Uncaught exception 0x%08x in thread %s, thread terminated. **WARNING: dynamic or external resources are not cleaned up**", e, threadInfo.name);
 	}
 
 	END_THREAD(); //if user ends thread, this will never get called.
@@ -130,10 +132,10 @@ extern "C" void __cexception_thread_create(void** thread, const char* name, unsi
 
 volatile uint32_t __cexception_fault_stack[8];
 
-extern "C" __attribute__((externally_visible)) void __CException_Fault_Handler_Stage2(/* uint32_t *pulFaultStackAddress, uint32_t val*/) {
+extern "C" void CException_Fault_Handler() {
 	uint32_t frame[8];
 	memcpy(frame, (void*)__cexception_fault_stack, sizeof(__cexception_fault_stack));
-	__asm (" cpsie i \n");
+	__asm (" cpsie if \n");
 	LOG(ERROR, "HARDWARE EXCEPTION CAUGHT");
 	LOG(ERROR, " r0  = 0x%08x", frame[0]);
 	LOG(ERROR, " r1  = 0x%08x", frame[1]);
@@ -146,7 +148,7 @@ extern "C" __attribute__((externally_visible)) void __CException_Fault_Handler_S
 	Throw(EXCEPTION_HARDWARE);
 }
 
-static  __attribute__( ( naked ) ) void CException_Fault_Handler( void ) {
+static  __attribute__( ( naked ) ) void __CException_Fault_Handler( void ) {
 	//OVERVIEW
 	// 0. Disable interrupts
 	// 1. Copy the exception handler stack frame into a global variable
@@ -175,40 +177,23 @@ static  __attribute__( ( naked ) ) void CException_Fault_Handler( void ) {
 	// - http://www.st.com/content/ccc/resource/technical/document/programming_manual/5b/ca/8d/83/56/7f/40/08/CD00228163.pdf/files/CD00228163.pdf/jcr:content/translations/en.CD00228163.pdf
 
 	__asm (
-		" cpsid i 													\n" //disable interrupts
-		" tst lr, #4                                                \n" //test bit 4 of LR
-		" ite eq                                                    \n" //if
+		" cpsid if 													\n" //disable interrupts
+		" tst lr, #4                                                \n" //compare lr to 0x4
+		" ite eq                                                    \n" //if equal then else
 		" mrseq r0, msp                                             \n" //then r0 = msp (main stack pointer)
 		" mrsne r0, psp                                             \n" //else r0 = psp (process stack pointer)
 		" ldr r3, cexception_stack_const 							\n" //load variable address
-		" ldr r2, [r0, #0] 											\n" //load previous r0
-		" str r2, [r3, #0] 											\n" //store to variable
-		" ldr r2, [r0, #4] 											\n" //load previous r1
-		" str r2, [r3, #4] 											\n" //store to variable
-		" ldr r2, [r0, #8] 											\n" //load previous r2
-		" str r2, [r3, #8] 											\n" //store to variable
-		" ldr r2, [r0, #12] 										\n" //load previous r3
-		" str r2, [r3, #12] 										\n" //store to variable
-		" ldr r2, [r0, #16] 										\n" //load previous r12
-		" str r2, [r3, #16] 										\n" //store to variable
-		" ldr r2, [r0, #20] 										\n" //load previous lr
-		" str r2, [r3, #20] 										\n" //store to variable
-		" ldr r2, [r0, #24] 										\n" //load previous pc
-		" str r2, [r3, #24] 										\n" //store to variable
-		" ldr r2, [r0, #28] 										\n" //load previous psr
-		" str r2, [r3, #28] 										\n" //store to variable
+		" push {r4-r11} 											\n" //save state - probably not necessary, since the code that was executing is now dead
+		" ldm r0, {r4-r11} 											\n" //load the exception stack frame into r4-r11
+		" stm r3, {r4-r11} 											\n" //store the data back to the global variable
+		" pop {r4-r11} 												\n" //restore state - again, probably unneeded, but who knows what gcc might do
 		" ldr r3, cexception_stage2_const                           \n" //load secondary handler address to r3
-		" str r3, [r0, #24]                                         \n" //overwrite PC on stack frame
-		" bx lr                                                     \n" //return from handler - will jump to PC on stack
-		" cexception_stage2_const: .word __CException_Fault_Handler_Stage2 \n"
-		" cexception_stack_const:  .word __cexception_fault_stack     \n"
+		" str r3, [r0, #24]                                         \n" //overwrite pc on stack frame
+		" bx lr                                                     \n" //trigger handler return - will reset proc mode and branch to pc on stack
+		" cexception_stage2_const: .word CException_Fault_Handler   \n" //label for function address
+		" cexception_stack_const:  .word __cexception_fault_stack   \n" //label for variable address
 	);
 }
-
-
-
-static const unsigned int __cexception_vector_table_count = 99;
-static void(*__cexception_vector_table[__cexception_vector_table_count])() __attribute__ ((aligned (256)));
 
 #ifdef STM32F2XX
 
@@ -222,7 +207,11 @@ static void(*__cexception_vector_table[__cexception_vector_table_count])() __att
   	  .word  UsageFault_Handler
   	  ...                        */
 #include "core_cm3.h"
-static void override_fault_handlers() {
+
+static const unsigned int __cexception_vector_table_count = 99;
+static void(*__cexception_vector_table[__cexception_vector_table_count])() __attribute__ ((aligned (256)));
+
+extern "C" void __cexception_activate_handlers() {
 	ATOMIC_BLOCK()
 	{
 		void(**currentVectorTable)() = (void(**)())SCB->VTOR;					//get active vector table address
@@ -234,14 +223,13 @@ static void override_fault_handlers() {
 
 		currentVectorTable = (void(**)())SCB->VTOR;
 
-		currentVectorTable[3] = CException_Fault_Handler;						//set HardFault_Handler
-		currentVectorTable[4] = CException_Fault_Handler;						//set MemManage_Handler
-		currentVectorTable[5] = CException_Fault_Handler;						//set BusFault_Handler
-		currentVectorTable[6] = CException_Fault_Handler;						//set UsageFault_Handler
+		currentVectorTable[3] = __CException_Fault_Handler;						//set HardFault_Handler
+		currentVectorTable[4] = __CException_Fault_Handler;						//set MemManage_Handler
+		currentVectorTable[5] = __CException_Fault_Handler;						//set BusFault_Handler
+		currentVectorTable[6] = __CException_Fault_Handler;						//set UsageFault_Handler
 
 	}
 }
-STARTUP(override_fault_handlers()); //install hard fault handler automatically
 #endif
 
 extern "C" void Throw(CEXCEPTION_T ExceptionID)

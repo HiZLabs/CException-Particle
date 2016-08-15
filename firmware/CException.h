@@ -31,13 +31,14 @@ void __cexception_unregister_thread(void* threadHandle);
 void __cexception_unregister_current_thread();
 //void __cexception_set_number_of_threads(unsigned int num);
 void __cexception_thread_create(void** thread, const char* name, unsigned int priority, void(*fun)(void*), void* thread_param, unsigned int stack_size);
+void __cexception_activate_handlers();
+
+#define CEXCEPTION_ACTIVATE_HW_HANDLERS() __cexception_activate_handlers()
 
 #define CEXCEPTION_REGISTER_THREAD(threadHandle) __cexception_register_new_thread(threadHandle)
 #define CEXCEPTION_UNREGISTER_THREAD(threadHandle) __cexceptionregister_end_thread(threadHandle)
 
-#ifndef CEXCEPTION_GET_ID
 #define CEXCEPTION_GET_ID __cexception_get_current_task_number()
-#endif
 
 #define NEW_THREAD(threadHandle_p, taskName, priority, taskFunction, taskArg, stackSize)   __cexception_thread_create(threadHandle_p, taskName, priority, taskFunction, taskArg, stackSize)
 
