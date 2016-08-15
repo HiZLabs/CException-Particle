@@ -134,16 +134,16 @@ extern "C" __attribute__((externally_visible)) void __CException_Fault_Handler_S
 	uint32_t frame[8];
 	memcpy(frame, (void*)__cexception_fault_stack, sizeof(__cexception_fault_stack));
 	__asm (" cpsie i \n");
-	LOG(TRACE, "HARDWARE EXCEPTION CAUGHT");
-	LOG(TRACE, " r0  = 0x%08x", frame[0]);
-	LOG(TRACE, " r1  = 0x%08x", frame[1]);
-	LOG(TRACE, " r2  = 0x%08x", frame[2]);
-	LOG(TRACE, " r3  = 0x%08x", frame[3]);
-	LOG(TRACE, " r12 = 0x%08x", frame[4]);
-	LOG(TRACE, " pc  = 0x%08x", frame[5]);
-	LOG(TRACE, " lr  = 0x%08x", frame[6]);
-	LOG(TRACE, " psr = 0x%08x", frame[7]);
-	Throw(EXCEPTION_HARD_FAULT);
+	LOG(ERROR, "HARDWARE EXCEPTION CAUGHT");
+	LOG(ERROR, " r0  = 0x%08x", frame[0]);
+	LOG(ERROR, " r1  = 0x%08x", frame[1]);
+	LOG(ERROR, " r2  = 0x%08x", frame[2]);
+	LOG(ERROR, " r3  = 0x%08x", frame[3]);
+	LOG(ERROR, " r12 = 0x%08x", frame[4]);
+	LOG(ERROR, " lr  = 0x%08x", frame[5]);
+	LOG(ERROR, " pc  = 0x%08x", frame[6]);
+	LOG(ERROR, " psr = 0x%08x", frame[7]);
+	Throw(EXCEPTION_HARDWARE);
 }
 
 static  __attribute__( ( naked ) ) void CException_Fault_Handler( void ) {
@@ -171,30 +171,8 @@ static  __attribute__( ( naked ) ) void CException_Fault_Handler( void ) {
 	//
 	//Some great reference:
 	// - http://www.hitex.co.uk/fileadmin/uk-files/pdf/ARM%20Seminar%20Presentations%202013/Feabhas%20Developing%20a%20Generic%20Hard%20Fault%20handler%20for%20ARM.pdf
-	//But of course, the greatest reference comes from the reference manual:
+	//Also the reference manual:
 	// - http://www.st.com/content/ccc/resource/technical/document/programming_manual/5b/ca/8d/83/56/7f/40/08/CD00228163.pdf/files/CD00228163.pdf/jcr:content/translations/en.CD00228163.pdf
-	//
-	//When the processor takes an exception, unless the exception is a tail-chained or a late- arriving
-	//exception, the processor pushes information onto the current stack. This operation is referred as stacking
-	//and the structure of eight data words is referred as stack frame. The stack frame contains the following
-	//information:
-	//
-	//- R0-R3, R12
-	//- Return address
-	//- PSR
-	//- LR.
-	//
-	//The order of the registers on the stack seems to be slightly different than the standard AAPCS frame
-	//suggested by the first link. Testing seems to confirm this--but also to be different from the listing in
-	//the reference manual:
-	// 0: R0
-	// 1: R1
-	// 2: R2
-	// 3: R3
-	// 4: R12
-	// 5: PC
-	// 6: LR
-	// 7: PSR
 
 	__asm (
 		" cpsid i 													\n" //disable interrupts
@@ -213,9 +191,9 @@ static  __attribute__( ( naked ) ) void CException_Fault_Handler( void ) {
 		" str r2, [r3, #12] 										\n" //store to variable
 		" ldr r2, [r0, #16] 										\n" //load previous r12
 		" str r2, [r3, #16] 										\n" //store to variable
-		" ldr r2, [r0, #20] 										\n" //load previous pc
+		" ldr r2, [r0, #20] 										\n" //load previous lr
 		" str r2, [r3, #20] 										\n" //store to variable
-		" ldr r2, [r0, #24] 										\n" //load previous lr
+		" ldr r2, [r0, #24] 										\n" //load previous pc
 		" str r2, [r3, #24] 										\n" //store to variable
 		" ldr r2, [r0, #28] 										\n" //load previous psr
 		" str r2, [r3, #28] 										\n" //store to variable
