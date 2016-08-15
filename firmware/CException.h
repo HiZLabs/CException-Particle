@@ -15,25 +15,20 @@ extern "C"
 #define CEXCEPTION_NONE      			(0x5A5A5A5A)
 #define EXCEPTION_OUT_OF_MEM 			(0x5A5A0000)
 #define EXCEPTION_THREAD_START_FAILED	(0x5A5A0001)
-#define EXCEPTION_HARDWARE				(0xffffffff)
-
-
-#if PLATFORM_THREADING
-#define CEXCEPTION_NUM_ID    (30) //multithreads!
-#else
-#define CEXCEPTION_NUM_ID    (1)
-#endif
+#define EXCEPTION_HARDWARE				(0x5A5A5AFF)
+#define EXCEPTION_INVALID_ARGUMENT      (0x5A5A0002)
 
 unsigned int __cexception_get_task_number(void* threadHandle);
 unsigned int __cexception_get_current_task_number();
-unsigned int __cexception_register_thread(void* threadHandle);
+unsigned int __cexception_register_thread(void* threadHandle, const char* name);
 void __cexception_unregister_thread(void* threadHandle);
 void __cexception_unregister_current_thread();
-//void __cexception_set_number_of_threads(unsigned int num);
+void __cexception_set_number_of_threads(unsigned int num);
 void __cexception_thread_create(void** thread, const char* name, unsigned int priority, void(*fun)(void*), void* thread_param, unsigned int stack_size);
 void __cexception_activate_handlers();
 
 #define CEXCEPTION_ACTIVATE_HW_HANDLERS() __cexception_activate_handlers()
+#define CEXCEPTION_SET_NUM_THREADS(number) __cexception_set_number_of_threads(number)
 
 #define CEXCEPTION_REGISTER_THREAD(threadHandle) __cexception_register_new_thread(threadHandle)
 #define CEXCEPTION_UNREGISTER_THREAD(threadHandle) __cexceptionregister_end_thread(threadHandle)
@@ -77,7 +72,7 @@ typedef struct {
 } CEXCEPTION_FRAME_T;
 
 //actual root frame storage (only one if single-tasking)
-extern volatile CEXCEPTION_FRAME_T CExceptionFrames[];
+extern volatile CEXCEPTION_FRAME_T * volatile CExceptionFrames;
 
 //Try (see C file for explanation)
 #define Try                                                         \
@@ -109,6 +104,8 @@ extern volatile CEXCEPTION_FRAME_T CExceptionFrames[];
 	for(unsigned char __done = 0; !__done; __done = 1)              \
 		for(CEXCEPTION_EX_VAR_DECL e = CExceptionFrames[CEXCEPTION_GET_ID].Exception; \
 			e != CEXCEPTION_NONE && !__done; __done = 1)
+
+//if(CExceptionFrames[CEXCEPTION_GET_ID].Exception != CEXCEPTION_NONE)
 
 //Throw an Error
 void Throw(CEXCEPTION_T ExceptionID);

@@ -4,22 +4,95 @@
 
 LOG_SOURCE_CATEGORY("cexception");
 
+#define CEXCEPTION_MAX_NAME_LEN 14
+struct TaskInfo {
+	void* handle;
+	char name[CEXCEPTION_MAX_NAME_LEN];
+};
+
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-volatile CEXCEPTION_FRAME_T CExceptionFrames[CEXCEPTION_NUM_ID] = {{ 0 }};
-static volatile void* TaskIds[CEXCEPTION_NUM_ID] = { 0 };
+static CEXCEPTION_FRAME_T DefaultCExceptionFrame = { 0 };
 static std::recursive_mutex taskLock;
 #pragma GCC diagnostic pop
 
+static volatile unsigned int CException_Num_Tasks = 1;
+volatile CEXCEPTION_FRAME_T * volatile CExceptionFrames = &DefaultCExceptionFrame;
+static volatile TaskInfo * volatile TaskIds = nullptr;
 
-extern "C" unsigned int __cexception_register_thread(void* threadHandle)
+static void dump_thread_list(unsigned int idToHighlight) {
+	uint32_t lastPrinted = 0;
+	for(;;)
+	{
+		uint32_t nextPrinted = UINT32_MAX;
+		uint32_t nextIndex = 0;
+		for(unsigned int i = 0; i < CException_Num_Tasks; i++)
+		{
+			uint32_t handle = (uint32_t)(TaskIds[i].handle);
+			if(handle > lastPrinted && handle < nextPrinted)
+			{
+				nextPrinted = handle;
+				nextIndex = i;
+			}
+		}
+		if(lastPrinted == nextPrinted || nextPrinted == UINT32_MAX)
+			break;
+		else {
+//			LOG(INFO, "%2u 0x%08x", nextIndex, nextPrinted);
+			LOG(INFO, " Thread %u: %-15s @ 0x%08x%s", nextIndex, TaskIds[nextIndex].name, TaskIds[nextIndex].handle, nextIndex == idToHighlight ? " <<<<" : "");
+			lastPrinted = nextPrinted;
+		}
+	}
+}
+
+extern "C" void __cexception_set_number_of_threads(unsigned int num) {
+	CEXCEPTION_T e = CEXCEPTION_NONE;
+	do {
+		std::lock_guard<std::recursive_mutex> lck(taskLock);
+		if(num <= CException_Num_Tasks) {
+				e = EXCEPTION_INVALID_ARGUMENT;
+				break;
+		}
+
+		CEXCEPTION_FRAME_T* newFrames = (CEXCEPTION_FRAME_T*)malloc(num*sizeof(CEXCEPTION_FRAME_T));
+		TaskInfo* newTaskList = (TaskInfo*)malloc((num)*sizeof(TaskInfo));
+		if(newFrames == nullptr || newTaskList == nullptr)
+		{
+			e = EXCEPTION_OUT_OF_MEM;
+			if(newFrames)
+				free(newFrames);
+			if(newTaskList)
+				free(newTaskList);
+
+			break;
+		}
+
+		memset(newFrames, 0, (num)*sizeof(CEXCEPTION_FRAME_T));
+		memcpy(newFrames, (void*)CExceptionFrames, CException_Num_Tasks * sizeof(CEXCEPTION_FRAME_T));
+
+		memset(newTaskList, 0, (num)*sizeof(TaskInfo));
+		if(CException_Num_Tasks > 1)
+			memcpy(newTaskList, (void*)TaskIds, (CException_Num_Tasks)*sizeof(TaskInfo));
+
+		CExceptionFrames = newFrames;
+		TaskIds = newTaskList;
+		CException_Num_Tasks = num;
+	} while(0);
+
+	if(e != CEXCEPTION_NONE)
+		Throw(e);
+}
+
+extern "C" unsigned int __cexception_register_thread(void* threadHandle, const char* name)
 {
 	std::lock_guard<std::recursive_mutex> lck(taskLock);
-	for(int i = 1; i < CEXCEPTION_NUM_ID; i++)
+	for(unsigned int i = 1; i < CException_Num_Tasks; i++)
 	{
-		if(TaskIds[i] == nullptr)
+		if(TaskIds[i].handle == nullptr)
 		{
-			TaskIds[i] = threadHandle;
+			TaskIds[i].handle = threadHandle;
+			strncpy((char*)TaskIds[i].name, name, CEXCEPTION_MAX_NAME_LEN);
+			TaskIds[i].name[CEXCEPTION_MAX_NAME_LEN] = 0;
 			return i;
 		}
 
@@ -31,38 +104,50 @@ extern "C" unsigned int __cexception_register_thread(void* threadHandle)
 extern "C" void __cexception_unregister_current_thread() {
 	std::lock_guard<std::recursive_mutex> lck(taskLock);
 	unsigned int taskNumber = __cexception_get_current_task_number();
-	TaskIds[taskNumber] = nullptr;
+	LOG(TRACE, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, TaskIds[taskNumber].name, TaskIds[taskNumber].handle);
+
+	TaskIds[taskNumber].handle = nullptr;
 }
 
 extern "C" void __cexception_unregister_thread(void* threadHandle) {
 	std::lock_guard<std::recursive_mutex> lck(taskLock);
 	unsigned int taskNumber = __cexception_get_task_number(threadHandle);
-	TaskIds[taskNumber] = nullptr;
+	LOG(TRACE, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, TaskIds[taskNumber].name, TaskIds[taskNumber].handle);
+
+	TaskIds[taskNumber].handle = nullptr;
 }
 
 
 extern "C" unsigned int __cexception_get_task_number(void* threadHandle) {
-	unsigned int i;
-	for(i = 1; i < CEXCEPTION_NUM_ID; i++)
+	unsigned int found = 0;
+	for(unsigned int i = 1; i < CException_Num_Tasks && !found; i++)
 	{
-		if(threadHandle == (void*)TaskIds[i])
-			return i;
+		if(threadHandle == TaskIds[i].handle) {
+			found = i;
+		}
 	}
 
-	LOG(TRACE, "Try/Catch from unregistered thread");
-	return 0; // if the thread is not registered, we'll just have to try our luck with a catch-all
+//	LOG(TRACE, "Found id %d", found);
+
+	if(!found) // if the thread is not registered, we'll just have to try our luck with a catch-all
+		LOG(TRACE, "Try/Catch from unregistered thread");
+	return found;
 }
 
 extern "C" unsigned int __cexception_get_current_task_number() {
-	unsigned int i;
-	for(i = 1; i < CEXCEPTION_NUM_ID; i++)
+	unsigned int found = 0;
+	for(unsigned int i = 1; i < CException_Num_Tasks && !found; i++)
 	{
-		if(os_thread_is_current((void*)TaskIds[i]))
-			return i;
+		if(os_thread_is_current(TaskIds[i].handle)) {
+			found = i;
+		}
 	}
 
-	LOG(TRACE, "Try/Catch from unregistered thread");
-	return 0; // if the thread is not registered, we'll just have to try our luck with a catch-all
+//	LOG(TRACE, "Found id %d", found);
+
+	if(!found) // if the thread is not registered, we'll just have to try our luck with a catch-all
+		LOG(TRACE, "Try/Catch from unregistered thread");
+	return found;
 }
 
 extern "C" void __global_exception_handler(CEXCEPTION_T ExceptionID) __attribute__((weak));
@@ -75,9 +160,8 @@ extern "C" void __global_exception_handler(CEXCEPTION_T ExceptionID)
 	unsigned int panicCode = ExceptionID < 15 ? ExceptionID : HardFault;
 	panic_((ePanicCode)panicCode, nullptr, HAL_Delay_Microseconds);
 }
-#define CEXCEPTION_MAX_NAME_LEN 14
+
 struct CEXCEPTION_THREAD_FUNC_T {
-	char name[CEXCEPTION_MAX_NAME_LEN+1];
 	void (*func)(void*);
 	void* arg;
 };
@@ -85,10 +169,12 @@ struct CEXCEPTION_THREAD_FUNC_T {
 void __cexception_thread_wrapper(void * arg) {
 	//wait until the lock is free--this will give the thread launcher a chance to register the thread,
 	//even if this thread is a higher priority.
+	//TODO: figure out what along this execution path forces the stack to be large
 	taskLock.lock();
 	taskLock.unlock();
 
-	LOG(TRACE, "Thread launched, id %d", CEXCEPTION_GET_ID);
+	unsigned int myId = CEXCEPTION_GET_ID;
+	LOG(TRACE, "Thread %d (%s @ 0x%08x) launched", myId, TaskIds[myId].name, TaskIds[myId].handle);
 
 	CEXCEPTION_T e;
 	CEXCEPTION_THREAD_FUNC_T* tip = ((CEXCEPTION_THREAD_FUNC_T*) arg);
@@ -98,10 +184,11 @@ void __cexception_thread_wrapper(void * arg) {
 	Try	{
 		threadInfo.func(threadInfo.arg);
 	} Catch(e) {
-		LOG(ERROR, "Uncaught exception 0x%08x in thread %s, thread terminated. **WARNING: dynamic or external resources are not cleaned up**", e, threadInfo.name);
+		LOG(ERROR, "Uncaught exception 0x%08x in thread %d (%s @ 0x%08x), thread terminated. **WARNING: dynamic or external resources are not cleaned up**", e, myId, TaskIds[myId].name, TaskIds[myId].handle);
+		dump_thread_list(myId);
 	}
 
-	END_THREAD(); //if user ends thread, this will never get called.
+	END_THREAD(); //if user ends thread, this will never get called #notaproblem
 }
 
 extern "C" void __cexception_thread_create(void** thread, const char* name, unsigned int priority, void(*fun)(void*), void* thread_param, unsigned int stack_size)
@@ -114,8 +201,6 @@ extern "C" void __cexception_thread_create(void** thread, const char* name, unsi
 	if (!ti)
 		Throw(EXCEPTION_OUT_OF_MEM);
 
-	strncpy(ti->name, name, sizeof(ti->name));
-	ti->name[CEXCEPTION_MAX_NAME_LEN] = '\0';
 	ti->func = fun;
 	ti->arg = thread_param;
 
@@ -127,7 +212,7 @@ extern "C" void __cexception_thread_create(void** thread, const char* name, unsi
 		Throw(EXCEPTION_THREAD_START_FAILED);
 	}
 
-	__cexception_register_thread(*thp);
+	__cexception_register_thread(*thp, name);
 }
 
 volatile uint32_t __cexception_fault_stack[8];
@@ -195,7 +280,7 @@ static  __attribute__( ( naked ) ) void __CException_Fault_Handler( void ) {
 	);
 }
 
-#ifdef STM32F2XX
+#ifdef STM32_DEVICE
 
 /* g_pfnVectors:
   	  .word  _estack
@@ -221,7 +306,7 @@ extern "C" void __cexception_activate_handlers() {
 			SCB->VTOR = ((uint32_t)&__cexception_vector_table);	//activate vector table
 		}
 
-		currentVectorTable = (void(**)())SCB->VTOR;
+		currentVectorTable = (void(**)())SCB->VTOR;								//update the pointer if it was changed
 
 		currentVectorTable[3] = __CException_Fault_Handler;						//set HardFault_Handler
 		currentVectorTable[4] = __CException_Fault_Handler;						//set MemManage_Handler
