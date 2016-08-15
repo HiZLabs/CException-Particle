@@ -73,9 +73,9 @@ extern "C" void __global_exception_handler(CEXCEPTION_T ExceptionID)
 	unsigned int panicCode = ExceptionID < 15 ? ExceptionID : HardFault;
 	panic_((ePanicCode)panicCode, nullptr, HAL_Delay_Microseconds);
 }
-
+#define CEXCEPTION_MAX_NAME_LEN 14
 struct CEXCEPTION_THREAD_FUNC_T {
-	char name[15];
+	char name[CEXCEPTION_MAX_NAME_LEN+1];
 	void (*func)(void*);
 	void* arg;
 };
@@ -113,7 +113,7 @@ extern "C" void __cexception_thread_create(void** thread, const char* name, unsi
 		Throw(EXCEPTION_OUT_OF_MEM);
 
 	strncpy(ti->name, name, sizeof(ti->name));
-	ti->name[sizeof(ti->name - 1)] = '\0';
+	ti->name[CEXCEPTION_MAX_NAME_LEN] = '\0';
 	ti->func = fun;
 	ti->arg = thread_param;
 
