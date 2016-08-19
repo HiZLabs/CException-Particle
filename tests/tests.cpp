@@ -83,7 +83,7 @@ static void exceptionCallback(CEXCEPTION_T e, CExceptionThreadInfo* info) {
 static void nothingThread(void* arg) {
 	threadRan = true;
 	LOG_DEBUG(INFO, "Doing Nothing");
-	delay(2000);
+	delay(20);
 	END_THREAD();
 }
 
@@ -100,7 +100,7 @@ test(CException_Group2_ThreadWithoutHandlePtr) {
 	}
 
 	//wait for thread to end
-	delay(3000);
+	delay(30);
 
 	//verify thread ran
 	assertTrue((bool)threadRan);
@@ -126,7 +126,7 @@ test(CException_Group2_ThreadWithHandlePtr) {
 	assertNotEqual((uint32_t)thread, (uint32_t)nullptr);
 
 	//wait for thread to end
-	delay(3000);
+	delay(30);
 
 	//verify thread ran
 	assertTrue((bool)threadRan);
@@ -136,7 +136,7 @@ test(CException_Group2_ThreadWithHandlePtr) {
 
 static void noEndThread(void* arg) {
 	threadRan = true;
-	delay(2000);
+	delay(20);
 }
 
 test(CException_Group2_ThreadWithoutEnd) {
@@ -152,7 +152,7 @@ test(CException_Group2_ThreadWithoutEnd) {
 	}
 
 	//wait for thread to end
-	delay(3000);
+	delay(30);
 
 	//verify thread ran
 	assertTrue((bool)threadRan);
@@ -162,7 +162,7 @@ test(CException_Group2_ThreadWithoutEnd) {
 
 static void throwThread(void* arg) {
 	threadRan = true;
-	delay(2000);
+	delay(20);
 	threadStage1 = true;
 	Throw(0xdead);
 	threadStage2 = true;
@@ -190,13 +190,13 @@ test(CException_Group2_ThrowThreadAndCallback) {
 	assertNotEqual((uint32_t)thread, (uint32_t)nullptr);
 
 	//wait for thread to start
-	delay(1000);
+	delay(10);
 
 	//verify thread started
 	assertTrue((bool)threadRan);
 
 	//wait for thread to end
-	delay(3000);
+	delay(30);
 
 	//verify execution passed stage 1
 	assertTrue((bool)threadStage1);
@@ -212,7 +212,7 @@ test(CException_Group2_ThrowThreadAndCallback) {
 
 static void throwHardwareExceptionThread(void* arg) {
 	threadRan = true;
-	delay(2000);
+	delay(20);
 	threadStage1 = true;
 	callInvalidFunction();
 	threadStage2 = true;
@@ -240,13 +240,13 @@ test(CException_Group2_HWExceptionThread) {
 	assertNotEqual((uint32_t)thread, (uint32_t)nullptr);
 
 	//wait for thread to start
-	delay(1000);
+	delay(10);
 
 	//verify thread started
 	assertTrue((bool)threadRan);
 
 	//wait for thread to finish
-	delay(3000);
+	delay(30);
 
 	//verify stage 1 was reached
 	assertTrue((bool)threadStage1);
@@ -278,21 +278,21 @@ test(CException_Group2_TooManyThreadsAndThreadCount) {
 	Try {
 		NEW_THREAD(nullptr, "TestThread1", OS_THREAD_PRIORITY_DEFAULT, nothingThread, nullptr, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
 		t1 = true;
-		delay(100);
+		delay(1);
 		NEW_THREAD(nullptr, "TestThread2", OS_THREAD_PRIORITY_DEFAULT, nothingThread, nullptr, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
 		t2 = true;
-		delay(100);
+		delay(1);
 		NEW_THREAD(nullptr, "TestThread3", OS_THREAD_PRIORITY_DEFAULT, nothingThread, nullptr, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
 		t3 = true;
-		delay(100);
+		delay(1);
 		NEW_THREAD(nullptr, "TestThread4", OS_THREAD_PRIORITY_DEFAULT, nothingThread, nullptr, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
 		t4 = true;
-		delay(1000);
+		delay(10);
 		//set uptest to make sure thread did not actually run
 		threadRan = false;
 		NEW_THREAD(nullptr, "TestThread5", OS_THREAD_PRIORITY_DEFAULT, nothingThread, nullptr, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
 		t5 = true;
-		delay(100);
+		delay(10);
 	} Catch(e) {
 		caught = true;
 	}
@@ -312,7 +312,7 @@ test(CException_Group2_TooManyThreadsAndThreadCount) {
 	assertEqual(__cexception_get_active_thread_count(), 4);
 
 	//wait for the test threads to end
-	delay(5000);
+	delay(50);
 
 	//verify the threads have all reported ending
 	assertEqual(__cexception_get_active_thread_count(), 0);
