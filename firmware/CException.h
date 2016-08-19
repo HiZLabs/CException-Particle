@@ -8,24 +8,42 @@ extern "C"
 {
 #endif
 
-#ifdef CEXCEPTION_USE_CONFIG_FILE
-#include "CExceptionConfig.h"
-#endif
+//#ifdef CEXCEPTION_USE_CONFIG_FILE
+//#include "CExceptionConfig.h"
+//#endif
 
 #define CEXCEPTION_NONE      			(0x5A5A5A5A)
 #define EXCEPTION_OUT_OF_MEM 			(0x5A5A0000)
 #define EXCEPTION_THREAD_START_FAILED	(0x5A5A0001)
+#define EXCEPTION_TOO_MANY_THREADS      (0x5A5A0002)
 #define EXCEPTION_HARDWARE				(0x5A5A5AFF)
 #define EXCEPTION_INVALID_ARGUMENT      (0x5A5A0002)
 
+#define CEXCEPTION_T        unsigned int
+
+#define CEXCEPTION_MAX_NAME_LEN 14
+#define CEXCEPTION_DATA_COUNT 10
+
+struct CExceptionThreadInfo {
+	void* handle;
+	char name[CEXCEPTION_MAX_NAME_LEN+1];
+	void(*exceptionCallback)(CEXCEPTION_T, CExceptionThreadInfo*);
+	unsigned int exceptionData[CEXCEPTION_DATA_COUNT];
+};
+
 unsigned int __cexception_get_task_number(void* threadHandle);
 unsigned int __cexception_get_current_task_number();
-unsigned int __cexception_register_thread(void* threadHandle, const char* name);
+unsigned int __cexception_register_thread(void* threadHandle, const char* name, void(*exceptionCallback)(CEXCEPTION_T, CExceptionThreadInfo*));
 void __cexception_unregister_thread(void* threadHandle);
 void __cexception_unregister_current_thread();
 void __cexception_set_number_of_threads(unsigned int num);
-void __cexception_thread_create(void** thread, const char* name, unsigned int priority, void(*fun)(void*), void* thread_param, unsigned int stack_size);
+unsigned int __cexception_get_number_of_threads();
+void __cexception_thread_create(void** thread, const char* name, unsigned int priority, void(*fun)(void*), void* thread_param, unsigned int stack_size, void(*cb)(CEXCEPTION_T, CExceptionThreadInfo*));
 void __cexception_activate_handlers();
+unsigned int __cexception_get_active_thread_count();
+unsigned int* __cexception_get_current_thread_exception_data();
+
+#define CEXCEPTION_CURRENT_DATA __cexception_get_current_thread_exception_data()
 
 #define CEXCEPTION_ACTIVATE_HW_HANDLERS() __cexception_activate_handlers()
 #define CEXCEPTION_SET_NUM_THREADS(number) __cexception_set_number_of_threads(number)
@@ -35,21 +53,18 @@ void __cexception_activate_handlers();
 
 #define CEXCEPTION_GET_ID __cexception_get_current_task_number()
 
-#define NEW_THREAD(threadHandle_p, taskName, priority, taskFunction, taskArg, stackSize)   __cexception_thread_create(threadHandle_p, taskName, priority, taskFunction, taskArg, stackSize)
+#define NEW_THREAD(threadHandle_p, taskName, priority, taskFunction, taskArg, stackSize, exceptionCallback)   __cexception_thread_create(threadHandle_p, taskName, priority, taskFunction, taskArg, stackSize, exceptionCallback)
 
 #define KILL_THREAD(threadHandle) do {      \
-	    __cexception_unregister_current_thread(); \
+	    __cexception_unregister_thread(threadHandle); \
 	    os_thread_cleanup(threadHandle); } while(0)
 
 #define END_THREAD()	KILL_THREAD(nullptr)
 
-#define CEXCEPTION_T         unsigned int
-
-#ifdef CEXCEPTION_DECLARE
-#define CEXCEPTION_EX_VAR_DECL CEXCEPTION_T
-#else
-#define CEXCEPTION_EX_VAR_DECL
-#endif
+#define WITH_LOCK_SAFE(lock) { std::lock_guard<decltype(lock)> __lock##lock((lock)); CEXCEPTION_T __lock_safe_e = CEXCEPTION_NONE; decltype(lock)* __lock_safe_lock = &(lock); Try
+//when WITH_LOCK_SAFE is used in unregistering the current thread, the Catch will have an invalid id and might throw inadvertently
+//as a result, we should re-check in the catch block.
+#define LOCK_SAFE_CLEANUP() Catch(__lock_safe_e) { if(__lock_safe_e != CEXCEPTION_NONE) { __lock_safe_lock->unlock(); Throw(__lock_safe_e); } } }
 
 //These hooks allow you to inject custom code into places, particularly useful for saving and restoring additional state
 #ifndef CEXCEPTION_HOOK_START_TRY
@@ -94,18 +109,14 @@ extern volatile CEXCEPTION_FRAME_T * volatile CExceptionFrames;
         }                                                           \
         else                                                        \
         {                                                           \
-        	CEXCEPTION_EX_VAR_DECL e = CExceptionFrames[MY_ID].Exception; \
+        	e = CExceptionFrames[MY_ID].Exception;                  \
             (void)e;                                                \
             CEXCEPTION_HOOK_START_CATCH;                            \
         }                                                           \
         CExceptionFrames[MY_ID].pFrame = PrevFrame;                 \
         CEXCEPTION_HOOK_AFTER_TRY;                                  \
     }                                                               \
-	for(unsigned char __done = 0; !__done; __done = 1)              \
-		for(CEXCEPTION_EX_VAR_DECL e = CExceptionFrames[CEXCEPTION_GET_ID].Exception; \
-			e != CEXCEPTION_NONE && !__done; __done = 1)
-
-//if(CExceptionFrames[CEXCEPTION_GET_ID].Exception != CEXCEPTION_NONE)
+	if(CExceptionFrames[CEXCEPTION_GET_ID].Exception != CEXCEPTION_NONE)
 
 //Throw an Error
 void Throw(CEXCEPTION_T ExceptionID);
