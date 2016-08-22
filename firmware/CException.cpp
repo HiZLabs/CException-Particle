@@ -66,7 +66,7 @@ unsigned int __cexception_get_active_thread_count() {
 }
 
 extern "C" void __cexception_set_number_of_threads(unsigned int num) {
-	WITH_LOCK_SAFE(taskLock)
+	BEGIN_LOCK_SAFE(taskLock)
 	{
 		if(num <= CException_Num_Tasks)
 			Throw(EXCEPTION_INVALID_ARGUMENT);
@@ -93,12 +93,12 @@ extern "C" void __cexception_set_number_of_threads(unsigned int num) {
 		CExceptionFrames = newFrames;
 		TaskIds = newTaskList;
 		CException_Num_Tasks = num;
-	} LOCK_SAFE_CLEANUP();
+	} END_LOCK_SAFE();
 }
 
 extern "C" unsigned int __cexception_register_thread(void* threadHandle, const char* name, void(*exceptionCallback)(CEXCEPTION_T,CExceptionThreadInfo*))
 {
-	WITH_LOCK_SAFE(taskLock)
+	BEGIN_LOCK_SAFE(taskLock)
 	{
 		for(unsigned int i = 1; i < CException_Num_Tasks; i++)
 		{
@@ -114,32 +114,32 @@ extern "C" unsigned int __cexception_register_thread(void* threadHandle, const c
 		}
 
 		Throw(EXCEPTION_OUT_OF_MEM);
-	} LOCK_SAFE_CLEANUP();
+	} END_LOCK_SAFE();
 
 
 	return UINT32_MAX;
 }
 
 extern "C" void __cexception_unregister_current_thread() {
-	WITH_LOCK_SAFE(taskLock)
+	BEGIN_LOCK_SAFE(taskLock)
 	{
 		unsigned int taskNumber = __cexception_get_current_task_number_internal();
 		LOG(INFO, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, TaskIds[taskNumber].name, TaskIds[taskNumber].handle);
 
 		TaskIds[taskNumber].handle = nullptr;
-	} LOCK_SAFE_CLEANUP();
+	} END_LOCK_SAFE();
 }
 
 extern "C" void __cexception_unregister_thread(void* threadHandle) {
 	if(threadHandle)
 	{
-		WITH_LOCK_SAFE(taskLock)
+		BEGIN_LOCK_SAFE(taskLock)
 		{
 			unsigned int taskNumber = __cexception_get_task_number(threadHandle);
 			LOG(INFO, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, TaskIds[taskNumber].name, TaskIds[taskNumber].handle);
 
 			TaskIds[taskNumber].handle = nullptr;
-		} LOCK_SAFE_CLEANUP();
+		} END_LOCK_SAFE();
 	}
 	else
 		__cexception_unregister_current_thread();
@@ -223,7 +223,7 @@ static void __cexception_thread_wrapper(void * arg) {
 extern "C" void __cexception_thread_create(void** thread, const char* name, unsigned int priority,
 		void(*fun)(void*), void* thread_param, unsigned int stack_size, void(*exceptionCallback)(CEXCEPTION_T, CExceptionThreadInfo*))
 {
-	WITH_LOCK_SAFE(taskLock)
+	BEGIN_LOCK_SAFE(taskLock)
 	{
 		if(__cexception_get_active_thread_count() >= (CException_Num_Tasks - 1))
 			Throw(EXCEPTION_TOO_MANY_THREADS);
@@ -248,7 +248,7 @@ extern "C" void __cexception_thread_create(void** thread, const char* name, unsi
 
 		__cexception_register_thread(*thp, name, exceptionCallback);
 
-	} LOCK_SAFE_CLEANUP();
+	} END_LOCK_SAFE();
 }
 
 volatile uint32_t __cexception_fault_stack[CEXCEPTION_DATA_COUNT];

@@ -354,15 +354,15 @@ test(CException_Group2_ThrowSetInvalidThreadCount) {
 	tearDown();
 }
 
-test(CException_Group2_WITH_LOCK_SAFE_Throw) {
+test(CException_Group2_BEGIN_LOCK_SAFE_Throw) {
 	std::mutex mutex;
 	bool caught = false;
 	CEXCEPTION_T e;
 	Try {
-		WITH_LOCK_SAFE(mutex)
+		BEGIN_LOCK_SAFE(mutex)
 		{
 			Throw(0xbc);
-		} LOCK_SAFE_CLEANUP();
+		} END_LOCK_SAFE();
 	} Catch(e) {
 		caught = true;
 	}
@@ -371,30 +371,30 @@ test(CException_Group2_WITH_LOCK_SAFE_Throw) {
 	assertTrue(caught);
 	assertEqual(e, 0xbc);
 
-	//the lock should be available now, if the LOCK_SAFE_CLEANUP worked correctly
+	//the lock should be available now, if the END_LOCK_SAFE worked correctly
 	bool lockIsAvailable = mutex.try_lock();
 	assertTrue(lockIsAvailable);
 }
 
-test(CException_Group2_WITH_LOCK_SAFE_NoThrow) {
+test(CException_Group2_BEGIN_LOCK_SAFE_NoThrow) {
 	std::mutex mutex;
 	bool caught = false;
 	bool lockIsAvailableInside;
 	CEXCEPTION_T e;
 	Try {
-		WITH_LOCK_SAFE(mutex)
+		BEGIN_LOCK_SAFE(mutex)
 		{
 			lockIsAvailableInside = mutex.try_lock();
 			if(lockIsAvailableInside)
 				mutex.unlock();
-		} LOCK_SAFE_CLEANUP();
+		} END_LOCK_SAFE();
 	} Catch(e) {
 		caught = true;
 	}
 
 	//should have nothing to catch here
 	assertFalse(caught);
-	//the lock should not be available within the WITH_LOCK_SAFE block
+	//the lock should not be available within the BEGIN_LOCK_SAFE block
 	assertFalse(lockIsAvailableInside);
 	//the lock should be available now, however, if the block was exited correctly
 	bool lockIsAvailable = mutex.try_lock();
