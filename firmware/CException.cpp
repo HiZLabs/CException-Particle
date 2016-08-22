@@ -26,8 +26,8 @@ static unsigned int __cexception_get_current_task_number_internal() {
 	return found;
 }
 
-unsigned int* __cexception_get_current_thread_exception_data() {
-	return (unsigned int*)&TaskIds[__cexception_get_current_task_number_internal()].exceptionData;
+uint32_t* __cexception_get_current_thread_exception_data() {
+	return (uint32_t*)&TaskIds[__cexception_get_current_task_number_internal()].exceptionData;
 }
 
 static void dump_thread_list(unsigned int idToHighlight) {
@@ -251,12 +251,10 @@ extern "C" void __cexception_thread_create(void** thread, const char* name, unsi
 	} LOCK_SAFE_CLEANUP();
 }
 
-extern "C" volatile uint32_t* const __hfsr = &(SCB->HFSR);
-extern "C" volatile uint32_t* const __cfsr = &(SCB->CFSR);
 volatile uint32_t __cexception_fault_stack[CEXCEPTION_DATA_COUNT];
 
 extern "C" void CException_Fault_Handler() {
-	volatile unsigned int* exceptionData = TaskIds[__cexception_get_current_task_number_internal()].exceptionData;
+	volatile uint32_t* exceptionData = TaskIds[__cexception_get_current_task_number_internal()].exceptionData;
 	memcpy((void *)exceptionData, (const void*)__cexception_fault_stack, sizeof(__cexception_fault_stack));
 	__asm (" cpsie if \n");
 	LOG(ERROR, "HARDWARE EXCEPTION CAUGHT");
@@ -310,18 +308,21 @@ static  __attribute__( ( naked ) ) void __CException_Fault_Handler( void ) {
 		" ldr r3, cexception_stack_const                            \n" //load variable address
 		" push {r4-r11}                                             \n" //save state - probably not necessary, since the code that was executing is now dead
 		" ldm r0, {r4-r11}                                          \n" //load the exception stack frame into r4-r11
-		" stmia r3, {r4-r11}                                        \n" //store the data back to the global variable, increment address
-		" ldr r1, hfsr_const                                        \n" //load hfsr
-		" ldr r2, cfsr_const                                        \n" //load cfsr
-		" stm r3, {r1-r2}                                           \n" //store hfsr and cfsr to global variable
+		" stm r3, {r4-r11}                                          \n" //store the data back to the global variable
 		" pop {r4-r11}                                              \n" //restore state - again, probably unneeded, but who knows what gcc might do
+	);
+
+	__cexception_fault_stack[8] = SCB->HFSR;
+	__cexception_fault_stack[9] = SCB->CFSR;
+	//clear CFSR
+	SCB->CFSR = 0xffffffff;
+
+	__asm (
 		" ldr r3, cexception_stage2_const                           \n" //load secondary handler address to r3
 		" str r3, [r0, #24]                                         \n" //overwrite pc on stack frame
 		" bx lr                                                     \n" //trigger handler return - will reset proc mode and branch to pc on stack
 		" cexception_stage2_const: .word CException_Fault_Handler   \n" //function address
 		" cexception_stack_const:  .word __cexception_fault_stack   \n" //variable address
-		" hfsr_const:              .word __hfsr                     \n" //hfsr address
-		" cfsr_const:              .word __cfsr                     \n" //cfsr address
 	);
 }
 

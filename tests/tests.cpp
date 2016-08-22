@@ -53,6 +53,14 @@ test(CException_Group2_CatchAHardwareException) {
 	//verify data from hardware exception data (PC at exception point, call of function at 0xdeadbeef)
 	assertEqual(CEXCEPTION_CURRENT_DATA[6], 0xdeadbeee);
 
+	uint32_t* data = CEXCEPTION_CURRENT_DATA;
+	uint32_t hfsr = data[8];
+	uint32_t cfsr = data[9];
+
+	assertTrue(caught);
+	assertTrue(hfsr & (1 << 30));    //forced hard fault
+	assertTrue(cfsr & (0x00000001)); //invalid instruction address
+
 	tearDown();
 }
 
@@ -409,6 +417,89 @@ test(CException_Group1_Activate_Hardware_Handlers) {
 	assertNotEqual(originalHandlerAddress, newHandlerAddress);
 
 	tearDown();
+}
+
+
+test(CException_Group2_HWFaultUnaligned) {
+	setUp();
+
+	assertTestPass(CException_Group1_Activate_Hardware_Handlers);
+
+	bool caught = false;
+	CEXCEPTION_T e;
+	Try {
+		//force unaligned usage fault
+		__asm volatile (
+				"push {r0-r2}\n"
+				"movt r0, #0x0000 \n"
+				"mov r0, #0x0001 \n"
+				"ldm r0, {r1-r2} \n"
+				"pop {r0-r2} \n"
+		);
+
+	} Catch(e) {
+		caught = true;
+	}
+
+	uint32_t* data = CEXCEPTION_CURRENT_DATA;
+	uint32_t hfsr = data[8];
+	uint32_t cfsr = data[9];
+
+	assertTrue(caught);
+	assertTrue(hfsr & (1 << 30)); //forced hard fault
+	assertTrue(cfsr & (1 << 24)); //unaligned
+
+
+	tearDown();
+}
+
+test(CException_Group2_HWFaultDiv0) {
+	setUp();
+
+	assertTestPass(CException_Group1_Activate_Hardware_Handlers);
+
+	bool caught = false;
+	CEXCEPTION_T e;
+	Try {
+		volatile int i = 1;
+		volatile int j = 0;
+		i = i/j;
+	} Catch(e) {
+		caught = true;
+	}
+
+	uint32_t* data = CEXCEPTION_CURRENT_DATA;
+	uint32_t hfsr = data[8];
+	uint32_t cfsr = data[9];
+
+	assertTrue(caught);
+	assertTrue(hfsr & (1 << 30)); //forced hard fault
+	assertTrue(cfsr & (1 << 25)); //div 0
+
+
+	tearDown();
+}
+
+test(CException_Group3_HWFaultClearCFSR)
+{
+	assertTestPass(CException_Group1_Activate_Hardware_Handlers);
+	assertTestPass(CException_Group2_HWFaultDiv0);
+	assertTestPass(CException_Group2_HWFaultUnaligned);
+
+	bool caught = false;
+	CEXCEPTION_T e;
+	Try {
+		callInvalidFunction();
+	} Catch(e) {
+		caught = true;
+	}
+
+	uint32_t* data = CEXCEPTION_CURRENT_DATA;
+	uint32_t cfsr = data[9];
+
+	assertTrue(caught);
+	assertFalse(cfsr & (1 << 25)); //div 0
+	assertFalse(cfsr & (1 << 24)); //unaligned
 }
 
 

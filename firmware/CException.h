@@ -2,6 +2,7 @@
 #define _CEXCEPTION_H
 
 #include <setjmp.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -28,7 +29,7 @@ struct CExceptionThreadInfo {
 	void* handle;
 	char name[CEXCEPTION_MAX_NAME_LEN+1];
 	void(*exceptionCallback)(CEXCEPTION_T, CExceptionThreadInfo*);
-	unsigned int exceptionData[CEXCEPTION_DATA_COUNT];
+	uint32_t exceptionData[CEXCEPTION_DATA_COUNT];
 };
 
 unsigned int __cexception_get_task_number(void* threadHandle);
@@ -41,7 +42,7 @@ unsigned int __cexception_get_number_of_threads();
 void __cexception_thread_create(void** thread, const char* name, unsigned int priority, void(*fun)(void*), void* thread_param, unsigned int stack_size, void(*cb)(CEXCEPTION_T, CExceptionThreadInfo*));
 void __cexception_activate_handlers();
 unsigned int __cexception_get_active_thread_count();
-unsigned int* __cexception_get_current_thread_exception_data();
+uint32_t* __cexception_get_current_thread_exception_data();
 
 #define CEXCEPTION_CURRENT_DATA __cexception_get_current_thread_exception_data()
 
