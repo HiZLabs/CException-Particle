@@ -320,7 +320,7 @@ static  __attribute__( ( naked ) ) void __CException_Fault_Handler( void ) {
 	__asm (
 		" ldr r3, cexception_stage2_const                           \n" //load secondary handler address to r3
 		" str r3, [r0, #24]                                         \n" //overwrite pc on stack frame
-		" bx lr                                                     \n" //trigger handler return - will reset proc mode and branch to pc on stack
+		" bx lr                                                     \n" //trigger handler return - will reset proc mode and branch to pc on stack - necessary because of __attribute__((naked))
 		" cexception_stage2_const: .word CException_Fault_Handler   \n" //function address
 		" cexception_stack_const:  .word __cexception_fault_stack   \n" //variable address
 	);
@@ -338,7 +338,7 @@ static  __attribute__( ( naked ) ) void __CException_Fault_Handler( void ) {
   	  .word  UsageFault_Handler
   	  ...                        */
 
-static const unsigned int __cexception_vector_table_count = 99;
+static const uint32_t __cexception_vector_table_count = 99;
 static void(*__cexception_vector_table[__cexception_vector_table_count])() __attribute__ ((aligned (256)));
 
 extern "C" void __cexception_activate_handlers() {
