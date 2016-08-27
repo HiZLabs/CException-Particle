@@ -63,9 +63,9 @@ uint32_t* __cexception_get_current_thread_exception_data();
 #define END_THREAD()	KILL_THREAD(nullptr)
 
 #define BEGIN_LOCK_SAFE(lock) { std::lock_guard<decltype(lock)> __lock##lock((lock)); CEXCEPTION_T __lock_safe_e = CEXCEPTION_NONE; decltype(lock)* __lock_safe_lock = &(lock); Try
-//when WITH_LOCK_SAFE is used in unregistering the current thread, the Catch will have an invalid id and might throw inadvertently
+//when BEGIN_LOCK_SAFE is used in unregistering the current thread, the Catch will have an invalid id and might throw inadvertently
 //as a result, we should re-check in the catch block.
-#define END_LOCK_SAFE() Catch(__lock_safe_e) { if(__lock_safe_e != CEXCEPTION_NONE) { __lock_safe_lock->unlock(); Throw(__lock_safe_e); } } }
+#define END_LOCK_SAFE() Catch(__lock_safe_e) { } if(__lock_safe_e != CEXCEPTION_NONE) { __lock_safe_lock->unlock(); Throw(__lock_safe_e); } }
 
 //These hooks allow you to inject custom code into places, particularly useful for saving and restoring additional state
 #ifndef CEXCEPTION_HOOK_START_TRY

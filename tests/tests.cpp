@@ -334,6 +334,39 @@ test(CException_Group2_TooManyThreadsAndThreadCount) {
 	tearDown();
 }
 
+test(CException_Group2_HighPriorityThread) {
+	setUp();
+
+	assertTestPass(CException_Group1_SetNumberOfThreads);
+
+	CEXCEPTION_T e = 0xffff;
+	bool caught = false;
+	Try {
+		NEW_THREAD(nullptr, "TestThread1", OS_THREAD_PRIORITY_CRITICAL, nothingThread, nullptr, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
+	} Catch(e) {
+		caught = true;
+	}
+
+	//verify the caught exception
+	assertFalse(caught);
+	assertEqual(e, 0xffff);
+
+	//verify that the expected number of threads is reported
+	assertEqual(__cexception_get_active_thread_count(), 1);
+
+	//wait for the test threads to end
+	delay(50);
+
+	//verify the threads have all reported ending
+	assertEqual(__cexception_get_active_thread_count(), 0);
+
+	//make sure no exceptions hit the global handler
+	assertEqual((int)TestingTheFallback, 0);
+
+	tearDown();
+}
+
+
 test(CException_Group2_ThrowSetInvalidThreadCount) {
 	setUp();
 

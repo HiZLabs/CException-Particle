@@ -8,8 +8,9 @@ LOG_SOURCE_CATEGORY("cexception");
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 static CEXCEPTION_FRAME_T DefaultCExceptionFrame = { 0 };
-static std::recursive_mutex taskLock;
 #pragma GCC diagnostic pop
+
+static std::mutex taskLock;
 
 static volatile unsigned int CException_Num_Tasks = 1;
 volatile CEXCEPTION_FRAME_T * volatile CExceptionFrames = &DefaultCExceptionFrame;
@@ -96,28 +97,31 @@ extern "C" void __cexception_set_number_of_threads(unsigned int num) {
 	} END_LOCK_SAFE();
 }
 
+unsigned int __cexception_register_thread_internal(void* threadHandle, const char* name, void(*exceptionCallback)(CEXCEPTION_T,CExceptionThreadInfo*))
+{
+	for(unsigned int i = 1; i < CException_Num_Tasks; i++)
+	{
+		if(TaskIds[i].handle == nullptr)
+		{
+			TaskIds[i].handle = threadHandle;
+			strncpy((char*)TaskIds[i].name, name, CEXCEPTION_MAX_NAME_LEN);
+			TaskIds[i].name[CEXCEPTION_MAX_NAME_LEN] = 0;
+			TaskIds[i].exceptionCallback = exceptionCallback;
+			return i;
+		}
+
+	}
+
+	Throw(EXCEPTION_OUT_OF_MEM);
+	return UINT32_MAX;
+}
+
 extern "C" unsigned int __cexception_register_thread(void* threadHandle, const char* name, void(*exceptionCallback)(CEXCEPTION_T,CExceptionThreadInfo*))
 {
 	BEGIN_LOCK_SAFE(taskLock)
 	{
-		for(unsigned int i = 1; i < CException_Num_Tasks; i++)
-		{
-			if(TaskIds[i].handle == nullptr)
-			{
-				TaskIds[i].handle = threadHandle;
-				strncpy((char*)TaskIds[i].name, name, CEXCEPTION_MAX_NAME_LEN);
-				TaskIds[i].name[CEXCEPTION_MAX_NAME_LEN] = 0;
-				TaskIds[i].exceptionCallback = exceptionCallback;
-				return i;
-			}
-
-		}
-
-		Throw(EXCEPTION_OUT_OF_MEM);
+		return __cexception_register_thread_internal(threadHandle, name, exceptionCallback);
 	} END_LOCK_SAFE();
-
-
-	return UINT32_MAX;
 }
 
 extern "C" void __cexception_unregister_current_thread() {
@@ -196,11 +200,10 @@ static void __cexception_thread_wrapper(void * arg) {
 	//wait until the lock is free--this will give the thread launcher a chance to register the thread,
 	//even if this thread is a higher priority.
 	//TODO: figure out what along this execution path forces the stack to be large
-	taskLock.lock();
-	taskLock.unlock();
+	{ std::lock_guard<decltype(taskLock)> lck(taskLock); }
 
 	unsigned int myId = __cexception_get_current_task_number_internal();
-	LOG(INFO, "Thread %d (%s @ 0x%08x) started", myId, TaskIds[myId].name, TaskIds[myId].handle);
+	LOG_DEBUG(INFO, "Thread %d (%s @ 0x%08x) started", myId, TaskIds[myId].name, TaskIds[myId].handle);
 
 	CEXCEPTION_T e;
 	CEXCEPTION_THREAD_FUNC_T* tip = ((CEXCEPTION_THREAD_FUNC_T*) arg);
@@ -212,8 +215,8 @@ static void __cexception_thread_wrapper(void * arg) {
 	} Catch(e) {
 		if(TaskIds[myId].exceptionCallback)
 			TaskIds[myId].exceptionCallback(e, (CExceptionThreadInfo*)&TaskIds[myId]);
-		LOG(ERROR, "Exception 0x%08x not handled in thread %d (%s @ 0x%08x).", e, myId, TaskIds[myId].name, TaskIds[myId].handle);
-		LOG(ERROR, "Thread %d terminated. **WARNING: dynamic or external resources are not cleaned up**", myId);
+		LOG_DEBUG(ERROR, "Exception 0x%08x not handled in thread %d (%s @ 0x%08x).", e, myId, TaskIds[myId].name, TaskIds[myId].handle);
+		LOG_DEBUG(ERROR, "Thread %d terminated. **WARNING: dynamic or external resources are not cleaned up**", myId);
 		dump_thread_list(myId);
 	}
 
@@ -223,22 +226,23 @@ static void __cexception_thread_wrapper(void * arg) {
 extern "C" void __cexception_thread_create(void** thread, const char* name, unsigned int priority,
 		void(*fun)(void*), void* thread_param, unsigned int stack_size, void(*exceptionCallback)(CEXCEPTION_T, CExceptionThreadInfo*))
 {
+	if(__cexception_get_active_thread_count() >= (CException_Num_Tasks - 1))
+		Throw(EXCEPTION_TOO_MANY_THREADS);
+
+	void** thp = thread;
+	void* th;
+	thp = thp ? thp : &th;
+	CEXCEPTION_THREAD_FUNC_T *ti = (CEXCEPTION_THREAD_FUNC_T*) malloc(sizeof(CEXCEPTION_THREAD_FUNC_T));
+	if (!ti)
+		Throw(EXCEPTION_OUT_OF_MEM);
+
+	ti->func = fun;
+	ti->arg = thread_param;
+
+
 	BEGIN_LOCK_SAFE(taskLock)
 	{
-		if(__cexception_get_active_thread_count() >= (CException_Num_Tasks - 1))
-			Throw(EXCEPTION_TOO_MANY_THREADS);
-
-		void** thp = thread;
-		void* th;
-		thp = thp ? thp : &th;
-		CEXCEPTION_THREAD_FUNC_T *ti = (CEXCEPTION_THREAD_FUNC_T*) malloc(sizeof(CEXCEPTION_THREAD_FUNC_T));
-		if (!ti)
-			Throw(EXCEPTION_OUT_OF_MEM);
-
-		ti->func = fun;
-		ti->arg = thread_param;
-
-		os_thread_create(thp, name, priority, __cexception_thread_wrapper, ti, stack_size);
+		os_thread_create(thp, name, priority, __cexception_thread_wrapper, ti, stack_size+256);
 
 		if (*thp == nullptr)
 		{
@@ -246,8 +250,7 @@ extern "C" void __cexception_thread_create(void** thread, const char* name, unsi
 			Throw(EXCEPTION_THREAD_START_FAILED);
 		}
 
-		__cexception_register_thread(*thp, name, exceptionCallback);
-
+		__cexception_register_thread_internal(*thp, name, exceptionCallback);
 	} END_LOCK_SAFE();
 }
 
