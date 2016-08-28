@@ -22,7 +22,7 @@ static void setUp(void)
 	threadStage1 = false;
 	threadStage2 = false;
 	threadException = 0;
-    CExceptionFrames[0].pFrame = NULL;
+    CExceptionFrames[0].pFrame = NULL; //TODO: need to initialize all frames
     TestingTheFallback = 0;
     TestingTheFallbackId = 0;
     __cexception_hangOnUnHandledGlobalException = false;
@@ -533,6 +533,81 @@ test(CException_Group3_HWFaultClearCFSR)
 	assertTrue(caught);
 	assertFalse(cfsr & (1 << 25)); //div 0
 	assertFalse(cfsr & (1 << 24)); //unaligned
+}
+
+void* __cexception_get_bl_target(void* func, uint32_t idx);
+
+test(CException_Group1_GetBLTargetFromFunctionPointer)
+{
+	void* c0 = __cexception_get_bl_target((void*)throwHardwareExceptionThread, 0);
+	void* c1 = __cexception_get_bl_target((void*)throwHardwareExceptionThread, 1);
+	void* c2 = __cexception_get_bl_target((void*)__gthread_mutex_destroy, 0);
+	assertEqual((uint32_t)delay, (uint32_t)c0);
+	assertEqual((uint32_t)callInvalidFunction, (uint32_t)c1);
+	assertEqual((uint32_t)os_mutex_destroy, (uint32_t)c2);
+}
+
+static void throwMyHandleThread(void* arg) {
+	delay(20);
+	Throw((uint32_t)__cexception_get_current_thread_handle());
+}
+
+test(CException_Group2_GetThreadHandle)
+{
+	setUp();
+
+	assertTestPass(CException_Group1_GetBLTargetFromFunctionPointer);
+	assertTestPass(CException_Group1_SetNumberOfThreads);
+
+	bool caught = false;
+	os_thread_t handle = nullptr;
+	CEXCEPTION_T e;
+	Try {
+		NEW_THREAD(&handle, "Test Thread", OS_THREAD_PRIORITY_DEFAULT, throwMyHandleThread, nullptr, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
+	} Catch(e) {
+		caught = true;
+	}
+
+	assertFalse(caught);
+	assertNotEqual((uint32_t)handle, 0);
+	delay(25);
+	assertEqual((uint32_t)handle, (uint32_t)threadException);
+
+	tearDown();
+}
+
+#define TEST_NAME_LEN 15
+
+static void copyNameThread(void* arg)
+{
+	const char* name = __cexception_get_current_thread_name();
+	LOG(TRACE, "Thread Name: %s 0x%02x%02x%02x%02x", name, name[0], name[1], name[2], name[3]);
+	delay(5);
+	strncpy((char*)arg, name, TEST_NAME_LEN);
+}
+
+test(CException_Group3_GetThreadName)
+{
+	setUp();
+
+	assertTestPass(CException_Group2_GetThreadHandle);
+
+	bool caught = false;
+	os_thread_t handle = nullptr;
+	char nameCopy[TEST_NAME_LEN];
+	CEXCEPTION_T e;
+	Try {
+		NEW_THREAD(&handle, "Test Thread", OS_THREAD_PRIORITY_DEFAULT, copyNameThread, nameCopy, OS_THREAD_STACK_SIZE_DEFAULT, exceptionCallback);
+	} Catch(e) {
+		caught = true;
+	}
+
+	assertFalse(caught);
+	assertNotEqual((uint32_t)handle, 0);
+	delay(20);
+	assertTrue(strcmp("Test Thread", nameCopy) == 0);
+
+	tearDown();
 }
 
 

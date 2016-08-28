@@ -43,6 +43,9 @@ void __cexception_thread_create(void** thread, const char* name, unsigned int pr
 void __cexception_activate_handlers();
 unsigned int __cexception_get_active_thread_count();
 uint32_t* __cexception_get_current_thread_exception_data();
+void* __cexception_get_current_thread_handle();
+const char* __cexception_get_thread_name(const void* threadHandle);
+const char* __cexception_get_current_thread_name();
 
 #define CEXCEPTION_CURRENT_DATA __cexception_get_current_thread_exception_data()
 

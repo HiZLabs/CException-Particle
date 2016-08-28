@@ -2,6 +2,8 @@
 #include "application.h"
 #include "core_cm3.h"
 #include <mutex>
+#include "system_threading.h"
+#include "logging.h"
 
 LOG_SOURCE_CATEGORY("cexception");
 
@@ -16,6 +18,51 @@ static volatile unsigned int CException_Num_Tasks = 1;
 volatile CEXCEPTION_FRAME_T * volatile CExceptionFrames = &DefaultCExceptionFrame;
 static volatile CExceptionThreadInfo * volatile TaskIds = nullptr;
 
+
+void* __cexception_get_bl_target(void* func, uint32_t idx) {
+	//verify the source function is thumb
+	if((uint32_t)func & 0x00000001)
+	{
+		uint16_t* f = (uint16_t*)((uint32_t)func & 0xfffffffe);
+		//find long branch (thumb) instruction
+		uint32_t i = 0;
+		uint32_t j = 0;
+		do
+		{
+			j++;
+			while(((f[i] & 0xf000) != 0xf000) || ((f[i+1] & 0xf000) != 0xf000)) i++;
+			if(idx >= j)
+				i += 2;
+		} while(idx >= j);
+		uint16_t h = f[i] & 0x7ff;
+		uint16_t l = f[i+1] & 0x7ff;
+		int32_t o = h & 0x400 ? 0xff800000 : 0; //if negative
+		o |= (h << 12) | (l << 1);
+		uint32_t a = o + (uint32_t)&(f[i]) + ((uint32_t)func & 0x00000001) + 4;
+		LOG(TRACE, "Finding BL instruction: f = 0x%08x, i = %d, fa = 0x%04x, fb = 0x%04x, h = 0x%04x, l = 0x%04x, o = 0x%08x, pc = 0x%08x, a = 0x%08x",
+				(uint32_t)f, (uint32_t)i, (uint32_t)f[i], (uint32_t)f[i+1], (uint32_t)h, (uint32_t)l, (uint32_t)o, (uint32_t)&(f[i]), a);
+		return (void*)a;
+	}
+	return nullptr;
+}
+
+static os_thread_t(*xTaskGetCurrentTaskHandle)() = nullptr;
+extern "C" const void* dynalib_location_hal_concurrent;
+
+os_thread_t __cexception_get_current_thread_handle() {
+	void* thread_is_current = (((void**)dynalib_location_hal_concurrent)[2]);
+	LOG_DEBUG(TRACE, "os_thread_is_current: 0x%08x", (uint32_t)thread_is_current);
+	if(xTaskGetCurrentTaskHandle == nullptr)
+		xTaskGetCurrentTaskHandle = (os_thread_t(*)())__cexception_get_bl_target(thread_is_current, 0);
+	os_thread_t handle = (xTaskGetCurrentTaskHandle());
+	LOG_DEBUG(TRACE, "xTaskGetCurrentTaskHandle = 0x%08x, xTaskGetCurrentTaskHandle() = 0x%08x", (uint32_t)xTaskGetCurrentTaskHandle, (uint32_t)handle);
+	return handle;
+}
+
+extern "C" __attribute__((weak)) os_thread_t __gthread_self() {
+	return __cexception_get_current_thread_handle();
+}
+
 static unsigned int __cexception_get_current_task_number_internal() {
 	unsigned int found = 0;
 	for(unsigned int i = 1; i < CException_Num_Tasks && !found; i++)
@@ -25,6 +72,27 @@ static unsigned int __cexception_get_current_task_number_internal() {
 		}
 	}
 	return found;
+}
+
+extern "C" const char* __cexception_get_current_thread_name() {
+	return __cexception_get_thread_name(__cexception_get_current_thread_handle());
+}
+
+extern "C" const char* __cexception_get_thread_name(const void* threadHandle)
+{
+	const char* name = (const char*)((uint32_t)__gthread_self() + 0x34);
+//	int i;
+//	for(i = 0; i < 20; i++)
+//	{
+//		if(name[i] > 20 && name[i] < 127)
+//			break;
+//	}
+//	if(i < 20 && strlen(name+i) < 20)
+//		return name+i;
+	if(strlen(name) < 20)
+		return name;
+	else
+		return "NO NAME";
 }
 
 uint32_t* __cexception_get_current_thread_exception_data() {
@@ -196,6 +264,10 @@ struct CEXCEPTION_THREAD_FUNC_T {
 	void* arg;
 };
 
+void* system_internal(int item, void* reserved);
+#define INVOKE_ASYNC(threadp, lambda) do { auto __lambda = lambda; if(threadp->isStarted() && !threadp->isCurrentThread()) threadp->invoke_async(FFL(__lambda)); else __lambda(); } while(0)
+
+
 static void __cexception_thread_wrapper(void * arg) {
 	//wait until the lock is free--this will give the thread launcher a chance to register the thread,
 	//even if this thread is a higher priority.
@@ -203,7 +275,12 @@ static void __cexception_thread_wrapper(void * arg) {
 	{ std::lock_guard<decltype(taskLock)> lck(taskLock); }
 
 	unsigned int myId = __cexception_get_current_task_number_internal();
-	LOG_DEBUG(INFO, "Thread %d (%s @ 0x%08x) started", myId, TaskIds[myId].name, TaskIds[myId].handle);
+	ActiveObjectThreadQueue* SystemThread = ((ActiveObjectThreadQueue*)system_internal(1, nullptr));
+	INVOKE_ASYNC(SystemThread, [myId]()
+	{
+		LOG(INFO, "Thread %d (%s @ 0x%08x) started", myId, TaskIds[myId].name, TaskIds[myId].handle);
+	});
+
 
 	CEXCEPTION_T e;
 	CEXCEPTION_THREAD_FUNC_T* tip = ((CEXCEPTION_THREAD_FUNC_T*) arg);
@@ -213,11 +290,20 @@ static void __cexception_thread_wrapper(void * arg) {
 	Try	{
 		threadInfo.func(threadInfo.arg);
 	} Catch(e) {
-		if(TaskIds[myId].exceptionCallback)
-			TaskIds[myId].exceptionCallback(e, (CExceptionThreadInfo*)&TaskIds[myId]);
-		LOG_DEBUG(ERROR, "Exception 0x%08x not handled in thread %d (%s @ 0x%08x).", e, myId, TaskIds[myId].name, TaskIds[myId].handle);
-		LOG_DEBUG(ERROR, "Thread %d terminated. **WARNING: dynamic or external resources are not cleaned up**", myId);
-		dump_thread_list(myId);
+		volatile bool done = 1;
+		INVOKE_ASYNC(SystemThread, [&]()
+		{
+			if(TaskIds[myId].exceptionCallback)
+				TaskIds[myId].exceptionCallback(e, (CExceptionThreadInfo*)&TaskIds[myId]);
+			LOG(ERROR, "Exception 0x%08x not handled in thread %d (%s @ 0x%08x).", e, myId, TaskIds[myId].name, TaskIds[myId].handle);
+			LOG(ERROR, "Thread %d terminated. **WARNING: dynamic or external resources are not cleaned up**", myId);
+
+			dump_thread_list(myId);
+			done = true;
+		});
+
+		while(!done) delay(10);
+		delay(1);
 	}
 
 	END_THREAD(); //if user ends thread, this will never get called #notaproblem
