@@ -2,7 +2,6 @@
 #include "application.h"
 #include "core_cm3.h"
 #include <mutex>
-#include "system_threading.h"
 #include "logging.h"
 
 LOG_SOURCE_CATEGORY("cexception");
@@ -117,7 +116,7 @@ static void dump_thread_list(unsigned int idToHighlight) {
 		if(lastPrinted == nextPrinted || nextPrinted == UINT32_MAX)
 			break;
 		else {
-			LOG(INFO, " Thread %u: %-15s @ 0x%08x%s", nextIndex, TaskIds[nextIndex].name, TaskIds[nextIndex].handle, nextIndex == idToHighlight ? " <<<<" : "");
+			LOG(INFO, " Thread %u: %-15s @ 0x%08x%s", nextIndex, __cexception_get_thread_name(TaskIds[nextIndex].handle), TaskIds[nextIndex].handle, nextIndex == idToHighlight ? " <<<<" : "");
 			lastPrinted = nextPrinted;
 		}
 	}
@@ -172,8 +171,6 @@ unsigned int __cexception_register_thread_internal(void* threadHandle, const cha
 		if(TaskIds[i].handle == nullptr)
 		{
 			TaskIds[i].handle = threadHandle;
-			strncpy((char*)TaskIds[i].name, name, CEXCEPTION_MAX_NAME_LEN);
-			TaskIds[i].name[CEXCEPTION_MAX_NAME_LEN] = 0;
 			TaskIds[i].exceptionCallback = exceptionCallback;
 			return i;
 		}
@@ -196,7 +193,7 @@ extern "C" void __cexception_unregister_current_thread() {
 	BEGIN_LOCK_SAFE(taskLock)
 	{
 		unsigned int taskNumber = __cexception_get_current_task_number_internal();
-		LOG(INFO, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, TaskIds[taskNumber].name, TaskIds[taskNumber].handle);
+		LOG(INFO, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, __cexception_get_thread_name(TaskIds[taskNumber].handle), TaskIds[taskNumber].handle);
 
 		TaskIds[taskNumber].handle = nullptr;
 	} END_LOCK_SAFE();
@@ -208,7 +205,7 @@ extern "C" void __cexception_unregister_thread(void* threadHandle) {
 		BEGIN_LOCK_SAFE(taskLock)
 		{
 			unsigned int taskNumber = __cexception_get_task_number(threadHandle);
-			LOG(INFO, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, TaskIds[taskNumber].name, TaskIds[taskNumber].handle);
+			LOG(INFO, "Unregistering thread %d (%s @ 0x%08x)", taskNumber, __cexception_get_thread_name(TaskIds[taskNumber].handle), TaskIds[taskNumber].handle);
 
 			TaskIds[taskNumber].handle = nullptr;
 		} END_LOCK_SAFE();
@@ -264,9 +261,11 @@ struct CEXCEPTION_THREAD_FUNC_T {
 	void* arg;
 };
 
+#include "system_threading.h"
 void* system_internal(int item, void* reserved);
-#define INVOKE_ASYNC(threadp, lambda) do { auto __lambda = lambda; if(threadp->isStarted() && !threadp->isCurrentThread()) threadp->invoke_async(FFL(__lambda)); else __lambda(); } while(0)
-
+#define INVOKE_ASYNC(threadp, lambda) do { auto __lambda = lambda; if(threadp != nullptr && threadp->isStarted() && !threadp->isCurrentThread()) threadp->invoke_async(FFL(__lambda)); else __lambda(); } while(0)
+ActiveObjectThreadQueue* CExceptionLoggingThread = nullptr;
+//	CExceptionLoggingThread = ((ActiveObjectThreadQueue*)system_internal(1, nullptr));
 
 static void __cexception_thread_wrapper(void * arg) {
 	//wait until the lock is free--this will give the thread launcher a chance to register the thread,
@@ -275,10 +274,11 @@ static void __cexception_thread_wrapper(void * arg) {
 	{ std::lock_guard<decltype(taskLock)> lck(taskLock); }
 
 	unsigned int myId = __cexception_get_current_task_number_internal();
-	ActiveObjectThreadQueue* SystemThread = ((ActiveObjectThreadQueue*)system_internal(1, nullptr));
-	INVOKE_ASYNC(SystemThread, [myId]()
+	const char* name =__cexception_get_thread_name(TaskIds[myId].handle);
+
+	INVOKE_ASYNC(CExceptionLoggingThread, [&]()
 	{
-		LOG(INFO, "Thread %d (%s @ 0x%08x) started", myId, TaskIds[myId].name, TaskIds[myId].handle);
+		LOG(INFO, "Thread %d (%s @ 0x%08x) started", myId, name, TaskIds[myId].handle);
 	});
 
 
@@ -291,11 +291,12 @@ static void __cexception_thread_wrapper(void * arg) {
 		threadInfo.func(threadInfo.arg);
 	} Catch(e) {
 		volatile bool done = 1;
-		INVOKE_ASYNC(SystemThread, [&]()
+
+		INVOKE_ASYNC(CExceptionLoggingThread, [&]()
 		{
 			if(TaskIds[myId].exceptionCallback)
 				TaskIds[myId].exceptionCallback(e, (CExceptionThreadInfo*)&TaskIds[myId]);
-			LOG(ERROR, "Exception 0x%08x not handled in thread %d (%s @ 0x%08x).", e, myId, TaskIds[myId].name, TaskIds[myId].handle);
+			LOG(ERROR, "Exception 0x%08x not handled in thread %d (%s @ 0x%08x).", e, myId, name, TaskIds[myId].handle);
 			LOG(ERROR, "Thread %d terminated. **WARNING: dynamic or external resources are not cleaned up**", myId);
 
 			dump_thread_list(myId);
@@ -427,25 +428,23 @@ static  __attribute__( ( naked ) ) void __CException_Fault_Handler( void ) {
   	  .word  UsageFault_Handler
   	  ...                        */
 
-static const uint32_t __cexception_vector_table_count = 99;
-static void(*__cexception_vector_table[__cexception_vector_table_count])() __attribute__ ((aligned (256)));
+//static const uint32_t __cexception_vector_table_count = 99;
+//static void(*__cexception_vector_table[__cexception_vector_table_count])() __attribute__ ((aligned (256)));
 
 extern "C" void __cexception_activate_handlers() {
 	ATOMIC_BLOCK()
 	{
 		void(**currentVectorTable)() = (void(**)())SCB->VTOR;					//get active vector table address
-		if(((uint32_t)currentVectorTable & 1 << 29) == 0)						//if vector table is in ROM
-		{																		//copy table
-			memcpy(__cexception_vector_table, currentVectorTable, sizeof(__cexception_vector_table));
-			SCB->VTOR = ((uint32_t)&__cexception_vector_table);	//activate vector table
+
+		if(((uint32_t)currentVectorTable & 1 << 29) != 0)						//if vector table is in RAM
+		{
+			currentVectorTable[3] = __CException_Fault_Handler;						//set HardFault_Handler
+			currentVectorTable[4] = __CException_Fault_Handler;						//set MemManage_Handler
+			currentVectorTable[5] = __CException_Fault_Handler;						//set BusFault_Handler
+			currentVectorTable[6] = __CException_Fault_Handler;						//set UsageFault_Handler
 		}
-
-		currentVectorTable = (void(**)())SCB->VTOR;								//update the pointer if it was changed
-
-		currentVectorTable[3] = __CException_Fault_Handler;						//set HardFault_Handler
-		currentVectorTable[4] = __CException_Fault_Handler;						//set MemManage_Handler
-		currentVectorTable[5] = __CException_Fault_Handler;						//set BusFault_Handler
-		currentVectorTable[6] = __CException_Fault_Handler;						//set UsageFault_Handler
+		else
+			LOG(ERROR, "VTOR->Flash");
 
 	}
 }

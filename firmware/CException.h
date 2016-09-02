@@ -22,12 +22,10 @@ extern "C"
 
 #define CEXCEPTION_T        unsigned int
 
-#define CEXCEPTION_MAX_NAME_LEN 14
 #define CEXCEPTION_DATA_COUNT 10
 
 struct CExceptionThreadInfo {
 	void* handle;
-	char name[CEXCEPTION_MAX_NAME_LEN+1];
 	void(*exceptionCallback)(CEXCEPTION_T, CExceptionThreadInfo*);
 	uint32_t exceptionData[CEXCEPTION_DATA_COUNT];
 };
